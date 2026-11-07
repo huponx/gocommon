@@ -1,0 +1,33 @@
+name: PR title
+
+# Separate from ci.yml so editing the title re-runs only this check.
+# Required status check name: "pr-title".
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Conventional commit title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          # Squash merge uses the PR title as commit subject; release.yml reads it to pick the bump.
+          pattern='^(feat|fix|perf|refactor|docs|chore|ci|test|build)(\([a-z0-9-]+\))?!?: .+'
+          if ! [[ "${PR_TITLE}" =~ ${pattern} ]]; then
+            echo "::error::PR title must look like 'feat(logging): add field' (types: feat fix perf refactor docs chore ci test build; '!' marks a breaking change). Got: ${PR_TITLE}"
+            exit 1
+          fi
+          echo "ok: ${PR_TITLE}"

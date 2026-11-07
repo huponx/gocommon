@@ -1,0 +1,67 @@
+name: CI
+
+# Required status check: "verify". main is protected, so nothing is pushed to it from CI:
+# a dirty go.mod/go.sum fails here and is fixed inside the PR.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: go mod tidy is clean
+        run: |
+          set -euo pipefail
+          go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "::error::go.mod/go.sum are not tidy. Run 'go mod tidy' and commit the result."
+            exit 1
+          fi
+
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [ -n "${unformatted}" ]; then
+            echo "::error::these files are not gofmt-formatted:"
+            echo "${unformatted}"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test -race -count=1 ./...
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "## verify"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| go mod tidy | clean |"
+            echo "| gofmt, vet | clean |"
+            echo "| build, test -race | passed |"
+            echo "| Go | $(go version | tr -s ' ') |"
+          } >> "${GITHUB_STEP_SUMMARY}"

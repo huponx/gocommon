@@ -1,150 +1,181 @@
 name: Release
 
+# Every merge to main that changes Go code is released as a semver tag + GitHub Release.
+# The bump comes from the conventional-commit titles since the previous tag:
+#   feat -> minor, anything else -> patch.
+#   type!: or BREAKING CHANGE -> minor too: a major bump is never automatic, run this
+#   workflow by hand with bump=major (a Go module needs a new /vN path from v2 on).
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**/README.md'
-      - '**/release.yml'
   workflow_dispatch:
     inputs:
       bump:
-        description: Semver component to increment
+        description: Override the automatic bump (auto = from commits). Also releases when no Go file changed.
         type: choice
-        options: [patch, minor, major]
-        default: patch
+        options: [auto, patch, minor, major]
+        default: auto
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      release_sha: ${{ steps.commit_modules.outputs.release_sha }}
-      modules: ${{ steps.commit_modules.outputs.modules }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - name: Tidy modules
-        run: go mod tidy
-      - name: Download modules
-        run: go mod download
-      - name: Test
-        run: go test ./...
-      - name: Commit go.sum
-        id: commit_modules
-        run: |
-          set -euo pipefail
-          echo "release_sha=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
-          if git diff --quiet go.mod go.sum; then
-            echo "modules=clean" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add go.mod go.sum
-          # [skip ci] so this push does not start a second Release run.
-          git commit -m "chore: go mod tidy [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-          echo "release_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-          echo "modules=committed" >> "${GITHUB_OUTPUT}"
-      - name: Summary
-        if: success()
-        run: |
-          {
-            echo "## Test"
-            echo ""
-            echo "| Field | Value |"
-            echo "|---|---|"
-            echo "| Result | passed |"
-            echo "| Modules | ${{ steps.commit_modules.outputs.modules }} |"
-            echo "| Go | $(go version | tr -s ' ') |"
-            echo "| Trigger | \`${GITHUB_SHA:0:7}\` |"
-            echo "| Release SHA | \`${{ steps.commit_modules.outputs.release_sha }}\` |"
-            echo "| Event | ${{ github.event_name }} |"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
   release:
-    needs: test
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           fetch-tags: true
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BUMP: ${{ github.event_name == 'workflow_dispatch' && inputs.bump || 'patch' }}
-          RELEASE_SHA: ${{ needs.test.outputs.release_sha }}
+          # BOT_TOKEN is needed once a tag ruleset restricts creating tags.
+          token: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Safety net: the merge commit can differ from what the PR was tested on.
+      - name: Build and test
         run: |
           set -euo pipefail
+          go build ./...
+          go test -count=1 ./...
 
-          git fetch origin "${GITHUB_REF_NAME}" --tags
+      - name: Release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          BUMP_INPUT: ${{ inputs.bump }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          out() { echo "$1=$2" >> "${GITHUB_OUTPUT}"; }
+          out released false
 
-          write_summary() {
-            {
-              echo "## Release"
-              echo ""
-              echo "| Field | Value |"
-              echo "|---|---|"
-              echo "| Status | ${1} |"
-              echo "| Tag | ${2} |"
-              echo "| Bump | ${BUMP} |"
-              echo "| Previous | ${3} |"
-              echo "| Commit | \`${RELEASE_SHA:0:7}\` |"
-              if [ -n "${4:-}" ]; then
-                echo "| URL | ${4} |"
-              fi
-            } >> "${GITHUB_STEP_SUMMARY}"
-          }
+          if [ "${GITHUB_REF_NAME}" != "${DEFAULT_BRANCH}" ]; then
+            out reason "run it on ${DEFAULT_BRANCH}, not ${GITHUB_REF_NAME}"
+            echo "::error::releases are cut from ${DEFAULT_BRANCH} only"
+            exit 1
+          fi
 
-          existing="$(git tag --points-at "${RELEASE_SHA}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
+          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1 || true)"
+          out previous "${latest:-none}"
+
+          existing="$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
           if [ -n "${existing}" ]; then
-            echo "Release SHA already has a semver tag; skipping release"
-            write_summary "skipped (commit already tagged)" "${existing}" "${existing}" ""
+            out reason "HEAD is already released as ${existing}"
             exit 0
           fi
 
-          latest="$(git tag -l 'v*.*.*' --sort=-v:refname | head -n1 || true)"
+          bump="auto"
+          [ "${EVENT}" = "workflow_dispatch" ] && bump="${BUMP_INPUT:-auto}"
+
           if [ -z "${latest}" ]; then
             tag="v0.1.0"
+            why="first release"
           else
+            # Only Go code releases (docs, workflows and so on do not), unless a bump was chosen by hand.
+            if [ "${bump}" = "auto" ] \
+               && ! git diff --name-only "${latest}" HEAD | grep -qE '(\.go$|^go\.(mod|sum)$)'; then
+              out reason "no Go file changed since ${latest}"
+              exit 0
+            fi
+
+            if [ "${bump}" = "auto" ]; then
+              bump="patch"
+              why="no feat or breaking commit"
+              while IFS= read -r -d $'\x1e' rec; do
+                subject="${rec%%$'\x1f'*}"
+                subject="${subject#$'\n'}"
+                body="${rec#*$'\x1f'}"
+                if [[ "${subject}" =~ ^[a-z]+(\([^\)]*\))?!: ]] || grep -q 'BREAKING CHANGE' <<< "${body}"; then
+                  # Never an automatic major: breaking changes bump the minor.
+                  bump="minor"; why="breaking (minor, major is manual): ${subject}"
+                elif [[ "${subject}" =~ ^feat(\(|:|!) ]] && [ "${bump}" = "patch" ]; then
+                  bump="minor"; why="feat: ${subject}"
+                fi
+              done < <(git log --format='%s%x1f%b%x1e' "${latest}..HEAD")
+            else
+              why="chosen by hand"
+            fi
+
             ver="${latest#v}"
             major="${ver%%.*}"
             rest="${ver#*.}"
             minor="${rest%%.*}"
             patch="${rest#*.}"
-            case "${BUMP}" in
-              major)
-                major=$((major + 1))
-                minor=0
-                patch=0
-                ;;
-              minor)
-                minor=$((minor + 1))
-                patch=0
-                ;;
-              patch)
-                patch=$((patch + 1))
-                ;;
-              *)
-                echo "unknown bump: ${BUMP}" >&2
-                exit 1
-                ;;
+            case "${bump}" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+              *) echo "unknown bump: ${bump}" >&2; exit 1 ;;
             esac
             tag="v${major}.${minor}.${patch}"
           fi
 
-          echo "Creating ${tag} (bump=${BUMP}, previous=${latest:-none}, target=${RELEASE_SHA})"
-          url="$(gh release create "${tag}" --generate-notes --target "${RELEASE_SHA}")"
-          write_summary "created" "${tag}" "${latest:-none}" "${url}"
+          # Go modules: major >= 2 needs the module path to end with /vN, lower majors must not.
+          tag_major="${tag#v}"; tag_major="${tag_major%%.*}"
+          modpath="$(awk '$1=="module"{print $2; exit}' go.mod)"
+          suffix=""
+          if [[ "${modpath}" =~ /v([0-9]+)$ ]]; then suffix="${BASH_REMATCH[1]}"; fi
+          expected=""
+          if [ "${tag_major}" -ge 2 ]; then expected="${tag_major}"; fi
+          if [ "${suffix}" != "${expected}" ]; then
+            out reason "module path '${modpath}' does not match tag ${tag}"
+            if [ -n "${expected}" ]; then
+              need="ending in /v${expected}"
+            else
+              need="without a /vN suffix"
+            fi
+            echo "::error::tag ${tag} needs a module path ${need}, but go.mod says '${modpath}'. For a major bump change 'module' in go.mod and every import first (github.com/huponx/gocommon/v${tag_major}), then release."
+            exit 1
+          fi
+
+          echo "Releasing ${tag} (bump=${bump}, ${why}, previous=${latest:-none})"
+          url="$(gh release create "${tag}" --generate-notes --target "${GITHUB_SHA}")"
+
+          {
+            echo "released=true"
+            echo "tag=${tag}"
+            echo "bump=${bump}"
+            echo "why=${why}"
+            echo "url=${url}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Summary
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          RELEASED: ${{ steps.release.outputs.released }}
+          REASON: ${{ steps.release.outputs.reason }}
+          PREVIOUS: ${{ steps.release.outputs.previous }}
+          TAG: ${{ steps.release.outputs.tag }}
+          BUMP: ${{ steps.release.outputs.bump }}
+          WHY: ${{ steps.release.outputs.why }}
+          URL: ${{ steps.release.outputs.url }}
+        run: |
+          {
+            echo "## Release"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Result | ${RESULT} |"
+            echo "| Go | $(go version 2>/dev/null | tr -s ' ' || echo n/a) |"
+            if [ "${RELEASED}" = "true" ]; then
+              echo "| Tag | \`${TAG}\` |"
+              echo "| Bump | ${BUMP} (${WHY}) |"
+              echo "| Previous | \`${PREVIOUS}\` |"
+              echo "| Release | ${URL} |"
+              echo "| Use | \`go get github.com/huponx/gocommon@${TAG}\` |"
+            else
+              echo "| Released | no |"
+              echo "| Reason | ${REASON:-see logs} |"
+              echo "| Previous | \`${PREVIOUS:-none}\` |"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
