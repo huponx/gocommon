@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/huponx/x-gocommon/apperror"
+	"github.com/huponx/gocommon/apperror"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"

@@ -5,8 +5,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/huponx/x-gocommon/logging"
-	"github.com/huponx/x-gocommon/requestctx"
+	"github.com/huponx/gocommon/logging"
+	"github.com/huponx/gocommon/requestctx"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

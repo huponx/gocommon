@@ -5,7 +5,7 @@ import (
 	"crypto/subtle"
 	"strings"
 
-	"github.com/huponx/x-gocommon/apperror"
+	"github.com/huponx/gocommon/apperror"
 	"google.golang.org/grpc/metadata"
 )
 

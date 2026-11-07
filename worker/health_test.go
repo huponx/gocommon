@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/huponx/x-gocommon/healthz"
+	"github.com/huponx/gocommon/healthz"
 )
 
 func TestHealthLive(t *testing.T) {

@@ -3,12 +3,12 @@ package requestctx
 import "net/http"
 
 const (
-	HTTPHeaderCorrelationID = "X-Correlation-ID"
-	HTTPHeaderRequestID     = "X-Request-ID"
-	HTTPHeaderTenantID      = "X-Tenant-ID"
-	HTTPHeaderAgencyID      = "X-Agency-ID"
-	HTTPHeaderTraceID       = "X-Trace-ID"
-	HTTPHeaderSpanID        = "X-Span-ID"
+	HTTPHeaderCorrelationID = "Correlation-ID"
+	HTTPHeaderRequestID     = "Request-ID"
+	HTTPHeaderTenantID      = "Tenant-ID"
+	HTTPHeaderAgencyID      = "Agency-ID"
+	HTTPHeaderTraceID       = "Trace-ID"
+	HTTPHeaderSpanID        = "Span-ID"
 )
 
 // FromHTTP reads inbound identity headers. UserID is intentionally omitted:
