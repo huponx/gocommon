@@ -14,7 +14,7 @@ func TestHTTPRoundTripOmitsUserID(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Header.Set(HTTPHeaderCorrelationID, "corr-1")
-	r.Header.Set("X-User-ID", "should-ignore")
+	r.Header.Set("User-ID", "should-ignore")
 	v := FromHTTP(r)
 	if v.CorrelationID != "corr-1" {
 		t.Fatalf("correlation: %q", v.CorrelationID)

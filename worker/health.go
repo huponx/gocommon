@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/huponx/x-gocommon/healthz"
+	"github.com/huponx/gocommon/healthz"
 )
 
 type healthReport struct {

@@ -1,8 +1,8 @@
-# x-gocommon
+# gocommon
 Shared Go library for HTTP, gRPC, and worker processes.
 `context.Context` is the in-process source of truth. HTTP headers and gRPC metadata are only used at process boundaries.
 ```bash
-go get github.com/huponx/x-gocommon@latest
+go get github.com/huponx/gocommon@latest
 ```
 Requires Go 1.26+.
 ## Packages
@@ -27,7 +27,7 @@ type Values struct {
 | Boundary | API |
 |---|---|
 | In-process | `WithValues`, `From`, `SetUserID`, `EnsureIDs` |
-| HTTP in | `FromHTTP` — reads `X-Correlation-ID`, `X-Request-ID`, `X-Tenant-ID`, `X-Agency-ID`, `X-Trace-ID`, `X-Span-ID`. **Does not read user id.** Resolve auth, then `SetUserID`. |
+| HTTP in | `FromHTTP` — reads `Correlation-ID`, `Request-ID`, `Tenant-ID`, `Agency-ID`, `Trace-ID`, `Span-ID`. **Does not read user id.** Resolve auth, then `SetUserID`. |
 | HTTP out | `ToHTTPHeaders` |
 | gRPC in | `HydrateIncoming` / `FromMD` (`correlation-id`, `user-id`, …) |
 | gRPC out | `AppendOutgoing` — copies `Values` onto outgoing metadata without overwriting keys already set |
@@ -133,12 +133,16 @@ HTTP mapping includes `InvalidArgument` → 400, `Unauthenticated` → 401, `Not
 HTTP edge hydrates context from headers, the app sets `user_id` after auth, the gRPC client copies values into metadata, the gRPC server hydrates context again. The same IDs show up on access logs and `logging.FromCtx`.
 Workers should copy `Values` from the enqueue payload into `Go`'s `ctx` if they need the same log fields.
 ## Local development
-This module is used from sibling services via `replace` / `go.work`. After publishing:
+Services consume tagged releases; to try unreleased changes locally use `replace github.com/huponx/gocommon => ../gocommon` or a `go.work`. Released versions:
 ```bash
-go get github.com/huponx/x-gocommon@v0.1.0
+go get github.com/huponx/gocommon@v0.1.0
 ```
+What CI runs on every PR (run it before pushing):
 ```bash
-go test ./...
+go mod tidy && git diff --exit-code go.mod go.sum
+gofmt -l .            # must print nothing
+go vet ./...
+go test -race -count=1 ./...
 ```
 ## Service-to-service Bearer auth
 Token belongs to the **receiver**. Callers must present the same secret. gRPC helpers take a string; they do not read env or hardcode a service name.
@@ -179,3 +183,100 @@ grpcclient.Dial(ctx, target, grpcclient.WithBearerToken(os.Getenv("COURIER_S2S_T
 ```
 
 Empty token is a no-op (no `authorization` header).
+
+## Releases
+
+Every PR goes through two required checks, then is squash-merged into `main`:
+
+| Workflow | Check | What it does |
+|---|---|---|
+| [`ci.yml`](.github/workflows/ci.yml) | `verify` | `go mod tidy` leaves no diff, `gofmt`, `go vet`, `go build`, `go test -race` |
+| [`pr-title.yml`](.github/workflows/pr-title.yml) | `pr-title` | PR title is a conventional commit (`feat(logging): ...`); re-runs when the title is edited |
+
+[`release.yml`](.github/workflows/release.yml) runs on every push to `main`: it builds and tests, then tags `vX.Y.Z` and creates a GitHub Release. Nothing is ever pushed to `main` by CI.
+
+The bump comes from the PR titles (squash commit subjects) since the previous tag:
+
+| Title | Bump |
+|---|---|
+| `feat: ...` | minor |
+| `fix:`, `perf:`, `refactor:`, `docs:`, `chore:`, ... | patch |
+| `feat!: ...` / `type!: ...` or `BREAKING CHANGE` in the body | minor (a breaking change never bumps the major automatically) |
+
+- The first release is `v0.1.0`.
+- A merge that changes no Go file since the last tag (no `*.go`, `go.mod`, `go.sum`) is not released.
+- **Major bumps are manual**: **Actions > Release > Run workflow**, `bump = major` (or `minor`/`patch` to force one).
+- From v2 on a Go module needs a new path. Before running a major bump, change `module` in `go.mod` to `github.com/huponx/gocommon/v2` and every import to the same prefix, merge that, then run the release. The workflow refuses a tag whose major does not match the module path (`v2.0.0` needs `/v2`, `v0`/`v1` must have no `/vN`).
+
+## Setup (one time)
+
+```bash
+REPO=huponx/gocommon
+```
+
+1. **Merge the workflows to `main` first**, while `main` is unprotected. The checks only appear in the ruleset picker after they have run once.
+2. **Repository settings**: squash merge only, so the PR title is the commit subject.
+   ```bash
+   gh api -X PATCH repos/$REPO -F allow_squash_merge=true -F allow_merge_commit=false \
+     -F allow_rebase_merge=false -F delete_branch_on_merge=true \
+     -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY
+   ```
+3. **Token** (optional until you add a tag ruleset): `BOT_TOKEN`, a fine-grained PAT with Contents: Read and write on this repo.
+   ```bash
+   gh secret set BOT_TOKEN --repo $REPO     # prompts for the value; or: pbpaste | gh secret set BOT_TOKEN --repo $REPO
+   ```
+   Without it `release.yml` falls back to `GITHUB_TOKEN`, which works as long as no ruleset restricts tags.
+4. **Branch protection** for `main`: save as `main-ruleset.json` and apply.
+   ```json
+   {
+     "name": "protect main",
+     "target": "branch",
+     "enforcement": "active",
+     "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+     "rules": [
+       { "type": "deletion" },
+       { "type": "non_fast_forward" },
+       { "type": "pull_request", "parameters": {
+           "required_approving_review_count": 0, "dismiss_stale_reviews_on_push": false,
+           "require_code_owner_review": false, "require_last_push_approval": false,
+           "required_review_thread_resolution": false } },
+       { "type": "required_status_checks", "parameters": {
+           "strict_required_status_checks_policy": true,
+           "required_status_checks": [ { "context": "verify" }, { "context": "pr-title" } ] } }
+     ],
+     "bypass_actors": []
+   }
+   ```
+   Apply it (run from the folder containing the file; the file is only an input, do not commit it):
+   ```bash
+   gh api repos/$REPO/rulesets --method POST --input main-ruleset.json
+   gh api repos/$REPO/rulesets --jq '.[] | {id, name, enforcement}'   # verify
+   ```
+   Or in the UI: **Settings > Rules > Rulesets > New ruleset > Import a ruleset**. To change it later: `gh api repos/$REPO/rulesets/<id> --method PUT --input main-ruleset.json`. Rulesets on a private repo need a paid GitHub plan.
+5. **Tag protection** (optional): released tags must never move or be deleted.
+   ```json
+   {
+     "name": "protect release tags",
+     "target": "tag",
+     "enforcement": "active",
+     "conditions": { "ref_name": { "include": ["refs/tags/v*.*.*"], "exclude": [] } },
+     "rules": [ { "type": "update" }, { "type": "deletion" }, { "type": "non_fast_forward" } ],
+     "bypass_actors": []
+   }
+   ```
+   ```bash
+   gh api repos/$REPO/rulesets --method POST --input tag-ruleset.json
+   ```
+   If you also restrict tag *creation*, add the `creation` rule with a bypass for the admin role (`{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}`) and set `BOT_TOKEN`.
+6. **Private module**: services that import it need `GOPRIVATE=github.com/huponx/*` and git credentials that can read the repo.
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| `verify` fails on `go mod tidy` | go.mod/go.sum not tidy; run `go mod tidy`, commit the result |
+| `verify` or `pr-title` stuck at "Expected" | PR has a merge conflict, or the workflows are not on `main` yet |
+| nothing was released after a merge | no Go file changed since the last tag, or `HEAD` is already tagged (see the run summary) |
+| released as patch but a minor was expected | the PR title did not start with `feat`; with squash merge only the title counts |
+| Release fails with "does not match tag" | major bump without the `/vN` module path (or a `/vN` path on a v0/v1 tag); see Releases |
+| `go get` cannot find the new version | the Go proxy caches misses; retry later or use `GOFLAGS=-mod=mod GOPROXY=direct` |

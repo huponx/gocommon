@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/huponx/x-gocommon/requestctx"
+	"github.com/huponx/gocommon/requestctx"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

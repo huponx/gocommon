@@ -4,8 +4,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/huponx/x-gocommon/logging"
-	"github.com/huponx/x-gocommon/requestctx"
+	"github.com/huponx/gocommon/logging"
+	"github.com/huponx/gocommon/requestctx"
 	"go.uber.org/zap"
 )
 
