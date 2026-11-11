@@ -11,16 +11,17 @@ import (
 )
 
 type options struct {
-	logger         *zap.Logger
-	timeout        time.Duration
-	insecure       bool
-	tlsConfig      *tls.Config
-	block          bool
-	maxRecvMsgSize int
-	maxSendMsgSize int
-	keepalive      keepalive.ClientParameters
-	bearerToken    string
-	extra          []grpc.DialOption
+	logger          *zap.Logger
+	timeout         time.Duration
+	insecure        bool
+	tlsConfig       *tls.Config
+	block           bool
+	maxRecvMsgSize  int
+	maxSendMsgSize  int
+	keepalive       keepalive.ClientParameters
+	bearerToken     string
+	bearerTokenFile string
+	extra           []grpc.DialOption
 }
 
 func defaultOptions() options {

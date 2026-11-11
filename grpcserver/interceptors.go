@@ -60,6 +60,14 @@ func streamAuth(auth AuthFunc) grpc.StreamServerInterceptor {
 	}
 }
 
+// callerField is the authenticated caller (KubeAuth), or a no-op field.
+func callerField(ctx context.Context) zap.Field {
+	if c := CallerFromContext(ctx); c != "" {
+		return zap.String("caller", c)
+	}
+	return zap.Skip()
+}
+
 func unaryLogging(base *zap.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		ctx = logging.WithCtx(ctx, base)
@@ -67,6 +75,7 @@ func unaryLogging(base *zap.Logger) grpc.UnaryServerInterceptor {
 		resp, err := handler(ctx, req)
 		st, _ := status.FromError(err)
 		logging.FromCtx(ctx).Info("grpc request",
+			callerField(ctx),
 			zap.String("grpc.method", info.FullMethod),
 			zap.String("grpc.code", st.Code().String()),
 			zap.Duration("latency", time.Since(start)),
@@ -83,6 +92,7 @@ func streamLogging(base *zap.Logger) grpc.StreamServerInterceptor {
 		err := handler(srv, wrapped)
 		st, _ := status.FromError(err)
 		logging.FromCtx(ctx).Info("grpc stream",
+			callerField(ctx),
 			zap.String("grpc.method", info.FullMethod),
 			zap.String("grpc.code", st.Code().String()),
 			zap.Duration("latency", time.Since(start)),

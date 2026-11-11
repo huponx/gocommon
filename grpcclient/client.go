@@ -16,15 +16,16 @@ func Dial(ctx context.Context, target string, opts ...Option) (*grpc.ClientConn,
 		opt(&o)
 	}
 
+	src := o.tokenSource()
 	unary := []grpc.UnaryClientInterceptor{
 		unaryRequestContext(),
-		unaryBearerToken(o.bearerToken),
+		unaryBearerSource(src),
 		unaryTimeout(o.timeout),
 		unaryLogging(o.logger),
 	}
 	stream := []grpc.StreamClientInterceptor{
 		streamRequestContext(),
-		streamBearerToken(o.bearerToken),
+		streamBearerSource(src),
 		streamLogging(o.logger),
 	}
 
