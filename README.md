@@ -57,7 +57,7 @@ cfg := config.MustLoad[Config]()
 | Block | Env (defaults) |
 |---|---|
 | `Server` | `HOST` (`0.0.0.0`), `PORT` (`8080`), `SHUTDOWN_TIMEOUT` (`15s`) — `Addr()` |
-| `Log` | `LOG_LEVEL` (`info`), `LOG_ENCODING` (`console`), `SERVICE_NAME` (`app`), `ENV` (`dev`) |
+| `Log` | `LOG_LEVEL` (`info`), `LOG_ENCODING` (`console`), `SERVICE_NAME` (`app`), `ENV` (`dev`, a service decides what the value means; courier treats only `local` as "auth optional") |
 | `Postgres` | `POSTGRES_HOST/PORT/USER/PASSWORD/DB/SSLMODE` — `URL()` |
 | `Redis` | `REDIS_HOST/PORT/PASSWORD/DB` — `URL()` |
 | `GRPCClient` | `GRPC_TARGET` (`localhost:9090`), `GRPC_TIMEOUT` (`5s`), `GRPC_INSECURE` (`true`) |
@@ -144,45 +144,75 @@ gofmt -l .            # must print nothing
 go vet ./...
 go test -race -count=1 ./...
 ```
-## Service-to-service Bearer auth
-Token belongs to the **receiver**. Callers must present the same secret. gRPC helpers take a string; they do not read env or hardcode a service name.
+## Service-to-service auth
 
-**Convention**
+Two ways to authenticate a gRPC call between services. Use ServiceAccount tokens inside a cluster, the static Bearer token only where there is no Kubernetes (a laptop).
 
-| | |
-| --- | --- |
-| Env | `{RECEIVER}_S2S_TOKEN` (e.g. `COURIER_S2S_TOKEN`) |
-| Source | Kubernetes `Secret` via `secretKeyRef`, key `token`, name `{receiver}-s2s-token` |
-| Receiver | Verify with its own env |
-| Caller | Send Bearer from the **target** env (multiple peers → multiple env vars) |
+### ServiceAccount token (recommended, no secrets)
+
+The caller sends a projected ServiceAccount token whose audience is the receiver (`authorization: Bearer <token>`). The receiver asks the Kubernetes API server to review it (`TokenReview`), accepts it when the audience matches and the user is in an allowed list, and puts the caller in the context. Nothing to create, store or rotate by hand: the kubelet rotates the token file.
+
+**Receiver**
+
+```go
+srv := grpcserver.New(grpcserver.WithKubeAuth(grpcserver.KubeAuthConfig{
+	Audience:        "courier",
+	AllowedSubjects: []string{"system:serviceaccount:billing:billing-api"},
+	// CacheTTL: 60s by default, capped by the token expiry.
+}))
+
+// In a handler (also added to the request log as "caller"):
+caller := grpcserver.CallerFromContext(ctx) // system:serviceaccount:billing:billing-api
+```
+
+- `WithKubeAuth` panics on an invalid config (no audience, unreadable cluster CA), so the process cannot start unprotected. `KubeAuth(cfg)` returns the error instead.
+- An empty `AllowedSubjects` is valid and rejects every caller.
+- Errors: unknown or wrong-audience token `Unauthenticated`, caller not in the list `PermissionDenied`, API server or token-review failure `Unavailable` (fail closed). Only accepted tokens are cached, so a revoked token can still pass for up to `CacheTTL`.
+- The receiver needs permission to create `TokenReview`s: bind its ServiceAccount to the ClusterRole `system:auth-delegator` (the `go-application` chart does it with `rbac.authDelegator: true`).
+- `/grpc.health.v1.Health/*` skips auth, reflection does not.
+
+**Caller**
+
+Run the caller with its own ServiceAccount and a projected token for the receiver's audience:
 
 ```yaml
-- name: COURIER_S2S_TOKEN
-  valueFrom:
-    secretKeyRef:
-      name: courier-s2s-token
-      key: token
+volumes:
+  - name: courier-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            audience: courier
+            expirationSeconds: 3600
+            path: token
+volumeMounts:
+  - name: courier-token
+    mountPath: /var/run/secrets/courier
+    readOnly: true
 ```
 
-**Server**
+```go
+grpcclient.Dial(ctx, target, grpcclient.WithBearerTokenFile("/var/run/secrets/courier/token"))
+```
+
+The file is re-read when it changes, so a rotated token is picked up without a restart. A missing or empty file fails the call with `Unavailable` instead of sending it unauthenticated. From outside the cluster use a short-lived token: `kubectl create token <sa> -n <ns> --audience courier --duration 10m`.
+
+### Static Bearer token
+
+Token belongs to the **receiver**. Callers must present the same secret. gRPC helpers take a string; they do not read env or hardcode a service name. Convention: env `{RECEIVER}_S2S_TOKEN` (for example `COURIER_S2S_TOKEN`), injected from a Kubernetes `Secret` via `secretKeyRef`, never a ConfigMap.
 
 ```go
-// Production / staging: panic at New if token is empty.
+// Panics at New if the token is empty.
 grpcserver.New(grpcserver.WithBearerAuth(token))
 
-// Local ENV=dev: empty token leaves the server open.
+// Optional: an empty token leaves the server open. Meant for local development only
+// (courier does this when ENV=local).
 grpcserver.New(grpcserver.WithOptionalBearerAuth(token))
-```
 
-`/grpc.health.v1.Health/*` skips auth so kube probes work without a token. Reflection still requires a token when auth is on.
-
-**Client**
-
-```go
+// Client; an empty token is a no-op (no authorization header).
 grpcclient.Dial(ctx, target, grpcclient.WithBearerToken(os.Getenv("COURIER_S2S_TOKEN")))
 ```
 
-Empty token is a no-op (no `authorization` header).
+`WithBearerTokenFile` takes precedence over `WithBearerToken` when both are set.
 
 ## Releases
 

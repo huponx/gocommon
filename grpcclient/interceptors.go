@@ -31,18 +31,6 @@ func appendBearer(ctx context.Context, token string) context.Context {
 	return metadata.NewOutgoingContext(ctx, md)
 }
 
-func unaryBearerToken(token string) grpc.UnaryClientInterceptor {
-	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		return invoker(appendBearer(ctx, token), method, req, reply, cc, opts...)
-	}
-}
-
-func streamBearerToken(token string) grpc.StreamClientInterceptor {
-	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-		return streamer(appendBearer(ctx, token), desc, cc, method, opts...)
-	}
-}
-
 func unaryRequestContext() grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		return invoker(requestctx.AppendOutgoing(ctx), method, req, reply, cc, opts...)
