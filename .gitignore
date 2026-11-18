@@ -1,0 +1,19 @@
+/bin/
+*.exe
+*.test
+*.out
+coverage.out
+coverage.html
+
+.env
+.env.*
+!.env.example
+
+# local workspace of the repositories that use gocommon (go work init . ../gocommon)
+go.work
+go.work.sum
+
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -17,6 +17,7 @@ Requires Go 1.26+.
 | [`healthz`](#healthz) | Gin `/healthz` + `/readyz` |
 | [`worker`](#worker) | Signals, in-flight drain, optional stdlib probes |
 | [`apperror`](#apperror) | Typed errors → gRPC `status` + HTTP JSON |
+| [`jwtx`, `authn`, `authz`, `tokenexchange`, `oidcclient`](#jwt-rbac-and-token-exchange) | JWT, RBAC, token exchange, OIDC client |
 ## `requestctx`
 ```go
 type Values struct {
@@ -213,6 +214,48 @@ grpcclient.Dial(ctx, target, grpcclient.WithBearerToken(os.Getenv("COURIER_S2S_T
 ```
 
 `WithBearerTokenFile` takes precedence over `WithBearerToken` when both are set.
+
+## JWT, RBAC and token exchange
+
+Used with the `identity` service (OAuth 2.0 / OIDC provider). Tokens are RS256 or ES256, carry a `kid` in the header and a `jti`, `iss`, `sub`, `aud`, `exp` in the claims. Every service verifies tokens itself against the JWKS of identity and accepts only tokens whose `aud` is its own name.
+
+| Package | Role |
+|---|---|
+| `jwtx` | `Signer`, `Verifier` (algorithm pinned, `jti` required), `Claims`, JWKS (`RemoteKeySet`: cache, rotation by unknown `kid`, stale-if-error) |
+| `authn` | `Principal` in the context (`authn.FromContext`), `Verify` |
+| `authz` | Permission matching on colon separated segments with segment wildcards (`identity:*:read`) |
+| `tokenexchange` | Client of the token endpoint: `ServiceToken` (client credentials) and `ExchangeToken` (RFC 8693), cached |
+| `oidcclient` | Relying party: discovery, PKCE, ID token, refresh, revoke, logout tokens |
+
+```go
+// Server: JWT users and services, plus ServiceAccount callers that are on the allow list.
+keys, _ := jwtx.NewRemoteKeySet(jwtx.RemoteKeySetConfig{URL: cfg.JWKSURL})
+verifier, _ := jwtx.NewVerifier(jwtx.VerifierConfig{Issuer: cfg.Issuer, Audience: "billing", Keys: keys})
+
+grpcserver.New(
+    grpcserver.WithAuth(grpcserver.AnyAuth(grpcserver.JWTAuth(verifier), kubeAuth)),
+    grpcserver.WithMethodPermissions(map[string]string{ // deny by default
+        "/billing.v1.Billing/GetInvoice":    "invoice:read",
+        "/billing.v1.Billing/CreateInvoice": "invoice:write",
+        "/billing.v1.Billing/Ping":          grpcserver.Public, // any authenticated caller
+    }),
+)
+
+// In a handler
+p := authn.FromContext(ctx) // Subject, ClientID, TokenID (jti), Perms, Actor, ...
+```
+
+A caller authenticated only by `KubeAuth` has no principal and is trusted for every mapped method (its allow list is its authorization). A method missing from the map is refused for everybody.
+
+```go
+// Client: speak for the user of the current request (token exchange), or as the service
+// itself when there is no user (jobs).
+tx, _ := tokenexchange.New(tokenexchange.Config{TokenURL: cfg.TokenURL, ClientID: "gatekeeper", ClientSecret: secret})
+conn, _ := grpcclient.Dial(ctx, "billing:9090", grpcclient.WithTokenExchange(tx, "billing"))
+// or: grpcclient.WithServiceToken(tx, "courier")
+```
+
+The exchanged token has the same user as `sub`, the callee as `aud`, the calling service in `act` (`Principal.Actor`), and a short life. HTTP services use `httpx.JWTAuth(verifier)` and `httpx.RequirePermission("invoice:read")`. Logs of the server interceptor carry `sub`, `jti`, `client_id` and `act`; never log the token.
 
 ## Releases
 
