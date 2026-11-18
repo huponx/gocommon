@@ -21,6 +21,7 @@ type options struct {
 	keepalive       keepalive.ClientParameters
 	bearerToken     string
 	bearerTokenFile string
+	ctxToken        ctxToken
 	extra           []grpc.DialOption
 }
 

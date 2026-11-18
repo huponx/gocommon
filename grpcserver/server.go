@@ -21,17 +21,32 @@ func New(opts ...Option) *Server {
 		opt(&o)
 	}
 
+	// Method permissions are deny by default; the services the server registers itself are
+	// opened to any authenticated caller (reflection only exists when explicitly enabled).
+	if o.methodPerms != nil {
+		if o.enableReflection {
+			o.methodPerms["/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"] = Public
+			o.methodPerms["/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"] = Public
+		}
+		if o.enableHealth {
+			o.methodPerms["/grpc.health.v1.Health/Check"] = Public
+			o.methodPerms["/grpc.health.v1.Health/Watch"] = Public
+		}
+	}
+
 	unary := []grpc.UnaryServerInterceptor{
 		unaryRecovery(),
 		unaryRequestContext(),
 		unaryAuth(o.auth),
 		unaryLogging(o.logger),
+		unaryMethodPerms(o.methodPerms),
 	}
 	stream := []grpc.StreamServerInterceptor{
 		streamRecovery(),
 		streamRequestContext(),
 		streamAuth(o.auth),
 		streamLogging(o.logger),
+		streamMethodPerms(o.methodPerms),
 	}
 
 	serverOpts := []grpc.ServerOption{

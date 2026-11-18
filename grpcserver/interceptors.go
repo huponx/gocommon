@@ -68,18 +68,36 @@ func callerField(ctx context.Context) zap.Field {
 	return zap.Skip()
 }
 
+func unaryMethodPerms(perms map[string]string) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if err := checkMethod(ctx, perms, info.FullMethod); err != nil {
+			return nil, err
+		}
+		return handler(ctx, req)
+	}
+}
+
+func streamMethodPerms(perms map[string]string) grpc.StreamServerInterceptor {
+	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if err := checkMethod(ss.Context(), perms, info.FullMethod); err != nil {
+			return err
+		}
+		return handler(srv, ss)
+	}
+}
+
 func unaryLogging(base *zap.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		ctx = logging.WithCtx(ctx, base)
 		start := time.Now()
 		resp, err := handler(ctx, req)
 		st, _ := status.FromError(err)
-		logging.FromCtx(ctx).Info("grpc request",
+		logging.FromCtx(ctx).Info("grpc request", append(principalFields(ctx),
 			callerField(ctx),
 			zap.String("grpc.method", info.FullMethod),
 			zap.String("grpc.code", st.Code().String()),
 			zap.Duration("latency", time.Since(start)),
-		)
+		)...)
 		return resp, err
 	}
 }
@@ -91,12 +109,12 @@ func streamLogging(base *zap.Logger) grpc.StreamServerInterceptor {
 		start := time.Now()
 		err := handler(srv, wrapped)
 		st, _ := status.FromError(err)
-		logging.FromCtx(ctx).Info("grpc stream",
+		logging.FromCtx(ctx).Info("grpc stream", append(principalFields(ctx),
 			callerField(ctx),
 			zap.String("grpc.method", info.FullMethod),
 			zap.String("grpc.code", st.Code().String()),
 			zap.Duration("latency", time.Since(start)),
-		)
+		)...)
 		return err
 	}
 }
