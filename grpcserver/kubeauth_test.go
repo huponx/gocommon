@@ -155,6 +155,38 @@ func TestKubeAuthEmptyAllowedListRejectsEveryone(t *testing.T) {
 	}
 }
 
+func TestNormalizeSubject(t *testing.T) {
+	cases := map[string]string{
+		"billing:billing-api":     testSubject,
+		"  billing:billing-api  ": testSubject,
+		testSubject:               testSubject,
+		"system:masters":          "system:serviceaccount:system:masters", // one colon is a ServiceAccount
+		"alice":                   "alice",
+		":name":                   ":name",
+		"ns:":                     "ns:",
+		"":                        "",
+	}
+	for in, want := range cases {
+		if got := normalizeSubject(in); got != want {
+			t.Errorf("normalizeSubject(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestKubeAuthAcceptsShortSubject(t *testing.T) {
+	api := newFakeAPI(t, func(string, []string) (int, any) { return 201, review(true, testSubject, "courier") })
+	fn := newAuth(t, api, func(c *KubeAuthConfig) {
+		c.AllowedSubjects = []string{"other:thing", " billing:billing-api ", ""}
+	})
+	ctx, err := fn(bearerCtx("t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := CallerFromContext(ctx); got != testSubject {
+		t.Fatalf("caller %q", got)
+	}
+}
+
 func TestKubeAuthAPIErrorFailsClosed(t *testing.T) {
 	api := newFakeAPI(t, func(string, []string) (int, any) { return http.StatusForbidden, map[string]any{} })
 	_, err := newAuth(t, api, nil)(bearerCtx("t"))
