@@ -167,6 +167,7 @@ caller := grpcserver.CallerFromContext(ctx) // system:serviceaccount:billing:bil
 ```
 
 - `WithKubeAuth` panics on an invalid config (no audience, unreadable cluster CA), so the process cannot start unprotected. `KubeAuth(cfg)` returns the error instead.
+- A ServiceAccount can be written in full (`system:serviceaccount:billing:billing-api`) or short, `billing:billing-api` (exactly one colon, expanded to the full form). Other usernames are used as given.
 - An empty `AllowedSubjects` is valid and rejects every caller.
 - Errors: unknown or wrong-audience token `Unauthenticated`, caller not in the list `PermissionDenied`, API server or token-review failure `Unavailable` (fail closed). Only accepted tokens are cached, so a revoked token can still pass for up to `CacheTTL`.
 - The receiver needs permission to create `TokenReview`s: bind its ServiceAccount to the ClusterRole `system:auth-delegator` (the `go-application` chart does it with `rbac.authDelegator: true`).

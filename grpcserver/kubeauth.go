@@ -41,7 +41,9 @@ type KubeAuthConfig struct {
 	// Audience the token must have been issued for (required).
 	Audience string
 	// AllowedSubjects are the accepted usernames, for example
-	// "system:serviceaccount:billing:billing-api". An empty list rejects every caller.
+	// "system:serviceaccount:billing:billing-api". A ServiceAccount can also be written as
+	// "<namespace>:<name>" ("billing:billing-api"), which is expanded to the full form. An empty
+	// list rejects every caller.
 	AllowedSubjects []string
 	// CacheTTL is how long an accepted token is remembered (default 60s). It is capped by
 	// the expiry of the token when that can be read.
@@ -112,12 +114,29 @@ func KubeAuth(cfg KubeAuthConfig) (AuthFunc, error) {
 	}
 	allowed := make(map[string]struct{}, len(cfg.AllowedSubjects))
 	for _, s := range cfg.AllowedSubjects {
-		if s = strings.TrimSpace(s); s != "" {
+		if s = normalizeSubject(s); s != "" {
 			allowed[s] = struct{}{}
 		}
 	}
 	k := &kubeAuth{cfg: cfg, allowed: allowed, cache: map[[32]byte]cacheEntry{}}
 	return k.authenticate, nil
+}
+
+// serviceAccountPrefix is the username prefix Kubernetes gives to ServiceAccounts.
+const serviceAccountPrefix = "system:serviceaccount:"
+
+// normalizeSubject trims a subject and expands the short ServiceAccount form
+// "<namespace>:<name>" (exactly one colon) to "system:serviceaccount:<namespace>:<name>".
+// Any other value is returned unchanged.
+func normalizeSubject(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.Count(s, ":") == 1 {
+		ns, name, _ := strings.Cut(s, ":")
+		if ns != "" && name != "" {
+			return serviceAccountPrefix + ns + ":" + name
+		}
+	}
+	return s
 }
 
 type cacheEntry struct {
