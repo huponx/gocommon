@@ -11,6 +11,7 @@ Requires Go 1.26+.
 | [`requestctx`](#requestctx) | Identity on context; header/metadata mapping |
 | [`logging`](#logging) | Zap; `FromCtx` adds request fields |
 | [`config`](#config) | Env load + reusable blocks (`Server`, `Log`, `Postgres`, `Redis`, `GRPCClient`) |
+| [`pagination`](#pagination) | Token pagination: page size rules and the opaque page token (`Size`, `Encode`, `Decode`) |
 | [`grpcserver`](#grpcserver) | Server + interceptors, gRPC health, graceful stop |
 | [`grpcclient`](#grpcclient) | Dial + interceptors (ctx → metadata, unary timeout, logging) |
 | [`httpx`](#httpx) | Gin middleware: logger, request context, access log |
@@ -55,6 +56,8 @@ type Config struct {
 }
 cfg := config.MustLoad[Config]()
 ```
+`config.Lines(items)` and `config.Fields(items)` flatten a list read with `envSeparator:","`, so a deployment can write one entry per line (a YAML block scalar `|-`) as well as the comma form. `Lines` splits on commas and new lines and keeps spaces inside an entry (`Admin Portal=https://...`); `Fields` also splits on spaces (URLs, origins).
+
 | Block | Env (defaults) |
 |---|---|
 | `Server` | `HOST` (`0.0.0.0`), `PORT` (`8080`), `SHUTDOWN_TIMEOUT` (`15s`) — `Addr()` |
@@ -71,6 +74,19 @@ r.Use(httpx.RequestContext())
 // app auth → requestctx.SetUserID
 r.Use(httpx.AccessLog())
 ```
+## `pagination`
+Token (keyset) pagination of List calls, shared by the services:
+```go
+size, err := pagination.Size(req.GetPageSize())          // 0 → 50, above 200 → 200, negative → InvalidArgument
+after, err := pagination.Decode(req.GetPageToken(), 1)   // parts of the key of the last item; "" → the first page
+items := store.List(ctx, after[0], size+1)                // fetch one more than a page
+if len(items) > size {
+	items = items[:size]
+	resp.NextPageToken = pagination.Encode(items[size-1].Name)   // composite key: Encode(a, b), Decode(token, 2)
+}
+```
+The token is opaque to the caller (base64url of the key parts). A malformed token or one with another number of parts is an `InvalidArgument` error. `SizeWith(n, def, max)` takes other limits.
+
 ## `grpcserver`
 Interceptors (unary + stream): recovery → hydrate `requestctx` → optional auth hook → logging.
 ```go
