@@ -25,7 +25,7 @@ func Size(n int32) (int, error) { return SizeWith(n, DefaultSize, MaxSize) }
 func SizeWith(n int32, def, maxSize int) (int, error) {
 	switch {
 	case n < 0:
-		return 0, apperror.InvalidArgument("page_size must not be negative")
+		return 0, apperror.InvalidArgument("page_size must not be negative").WithReason("page_size_negative")
 	case n == 0:
 		return def, nil
 	case int(n) > maxSize:
@@ -49,11 +49,11 @@ func Decode(token string, n int) ([]string, error) {
 	}
 	b, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return nil, apperror.InvalidArgument("invalid page_token")
+		return nil, apperror.InvalidArgument("invalid page_token").WithReason("invalid_page_token")
 	}
 	parts := strings.Split(string(b), tokenSep)
 	if len(parts) != n {
-		return nil, apperror.InvalidArgument("invalid page_token")
+		return nil, apperror.InvalidArgument("invalid page_token").WithReason("invalid_page_token")
 	}
 	return parts, nil
 }
