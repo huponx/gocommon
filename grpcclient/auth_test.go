@@ -32,3 +32,11 @@ func TestAppendBearerEmpty(t *testing.T) {
 		t.Fatal("expected no metadata")
 	}
 }
+
+func TestWithMaxMsgSizeKeepsTheDefaultOfADirectionWithZero(t *testing.T) {
+	o := defaultOptions()
+	WithMaxMsgSize(16<<20, 0)(&o)
+	if o.maxRecvMsgSize != 16<<20 || o.maxSendMsgSize != 8<<20 {
+		t.Errorf("recv %d send %d", o.maxRecvMsgSize, o.maxSendMsgSize)
+	}
+}

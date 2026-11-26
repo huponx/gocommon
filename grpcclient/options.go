@@ -75,6 +75,19 @@ func WithBlock(block bool) Option {
 	}
 }
 
+// WithMaxMsgSize sets the largest message the client receives and sends, in bytes (default 8 MiB each); a value
+// of 0 or less keeps the default of that direction.
+func WithMaxMsgSize(recv, send int) Option {
+	return func(o *options) {
+		if recv > 0 {
+			o.maxRecvMsgSize = recv
+		}
+		if send > 0 {
+			o.maxSendMsgSize = send
+		}
+	}
+}
+
 func WithDialOptions(opts ...grpc.DialOption) Option {
 	return func(o *options) {
 		o.extra = append(o.extra, opts...)

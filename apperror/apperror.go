@@ -4,14 +4,22 @@ import (
 	"errors"
 	"net/http"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
+// Domain is the ErrorInfo domain of the reasons of this package.
+const Domain = "apperror"
+
 type Error struct {
 	Code    codes.Code
 	Message string
-	err     error
+	// Reason is a stable snake_case key of the error ("last_admin"); a client translates it. Optional.
+	Reason string
+	// Params fill the placeholders of the translated reason ({"limit": "256 MiB"}). Optional.
+	Params map[string]string
+	err    error
 }
 
 func (e *Error) Error() string {
@@ -38,7 +46,45 @@ func (e *Error) GRPCStatus() *status.Status {
 	if e == nil {
 		return status.New(codes.OK, "")
 	}
-	return status.New(e.Code, e.Error())
+	st := status.New(e.Code, e.Error())
+	if e.Reason == "" {
+		return st
+	}
+	withInfo, err := st.WithDetails(&errdetails.ErrorInfo{Reason: e.Reason, Domain: Domain, Metadata: e.Params})
+	if err != nil {
+		return st
+	}
+	return withInfo
+}
+
+// WithReason sets the stable reason and its parameters, given as key, value pairs; it returns e for chaining.
+// A trailing key without a value is ignored.
+func (e *Error) WithReason(reason string, params ...string) *Error {
+	if e == nil {
+		return nil
+	}
+	e.Reason = reason
+	e.Params = nil
+	for i := 0; i+1 < len(params); i += 2 {
+		if e.Params == nil {
+			e.Params = make(map[string]string, len(params)/2)
+		}
+		e.Params[params[i]] = params[i+1]
+	}
+	return e
+}
+
+// ReasonOf returns the reason and parameters carried by the ErrorInfo detail of a gRPC status.
+func ReasonOf(st *status.Status) (string, map[string]string) {
+	if st == nil {
+		return "", nil
+	}
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.ErrorInfo); ok && info.GetDomain() == Domain {
+			return info.GetReason(), info.GetMetadata()
+		}
+	}
+	return "", nil
 }
 
 func (e *Error) CodeName() string {
@@ -84,7 +130,8 @@ func From(err error) *Error {
 	if !ok {
 		return Wrap(codes.Internal, err.Error(), err)
 	}
-	return &Error{Code: st.Code(), Message: st.Message(), err: err}
+	reason, params := ReasonOf(st)
+	return &Error{Code: st.Code(), Message: st.Message(), Reason: reason, Params: params, err: err}
 }
 
 func HTTPStatus(err error) int {

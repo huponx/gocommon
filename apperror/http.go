@@ -7,8 +7,10 @@ import (
 )
 
 type Payload struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string            `json:"code"`
+	Reason  string            `json:"reason,omitempty"`
+	Params  map[string]string `json:"params,omitempty"`
+	Message string            `json:"message"`
 }
 
 type Body struct {
@@ -24,6 +26,8 @@ func WriteHTTP(c *gin.Context, err error) {
 	c.JSON(e.HTTPStatus(), Body{
 		Error: Payload{
 			Code:    e.CodeName(),
+			Reason:  e.Reason,
+			Params:  e.Params,
 			Message: e.Error(),
 		},
 	})
