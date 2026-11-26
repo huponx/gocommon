@@ -1,5 +1,5 @@
 # gocommon
-Shared Go library for HTTP, gRPC, and worker processes. Test
+Shared Go library for HTTP, gRPC, and worker processes.
 `context.Context` is the in-process source of truth. HTTP headers and gRPC metadata are only used at process boundaries.
 ```bash
 go get github.com/huponx/gocommon@latest
