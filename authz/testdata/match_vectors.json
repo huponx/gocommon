@@ -1,0 +1,255 @@
+{
+  "_note": "Shared by gocommon/authz (authz_test.go) and web/packages/auth-client (permissions.test.ts). Keep the two copies identical: change both.",
+  "match": [
+    {
+      "granted": "bill:read",
+      "required": "bill:read",
+      "want": true
+    },
+    {
+      "granted": "bill:read",
+      "required": "bill:write",
+      "want": false
+    },
+    {
+      "granted": "bill:*",
+      "required": "bill:write",
+      "want": true
+    },
+    {
+      "granted": "bill:*",
+      "required": "bill:invoice:write",
+      "want": true
+    },
+    {
+      "granted": "bill:*",
+      "required": "bill",
+      "want": false
+    },
+    {
+      "granted": "bill:*",
+      "required": "dict:write",
+      "want": false
+    },
+    {
+      "granted": "*:read",
+      "required": "dict:read",
+      "want": true
+    },
+    {
+      "granted": "*:read",
+      "required": "dict:write",
+      "want": false
+    },
+    {
+      "granted": "*:read",
+      "required": "dict:invoice:read",
+      "want": false
+    },
+    {
+      "granted": "identity:*:read",
+      "required": "identity:user:read",
+      "want": true
+    },
+    {
+      "granted": "identity:*:read",
+      "required": "identity:read",
+      "want": false
+    },
+    {
+      "granted": "identity:*:read",
+      "required": "identity:user:write",
+      "want": false
+    },
+    {
+      "granted": "identity:*:read",
+      "required": "identity:user:role:read",
+      "want": false
+    },
+    {
+      "granted": "identity:user:*",
+      "required": "identity:user:write",
+      "want": true
+    },
+    {
+      "granted": "identity:user:*",
+      "required": "identity:role:write",
+      "want": false
+    },
+    {
+      "granted": "*",
+      "required": "x:y",
+      "want": true
+    },
+    {
+      "granted": "*",
+      "required": "x",
+      "want": true
+    },
+    {
+      "granted": "*:*",
+      "required": "x:y",
+      "want": true
+    },
+    {
+      "granted": "bill",
+      "required": "bill:read",
+      "want": false
+    },
+    {
+      "granted": "bill:read",
+      "required": "bill",
+      "want": false
+    },
+    {
+      "granted": "bill:read",
+      "required": "bill:read:extra",
+      "want": false
+    },
+    {
+      "granted": "bi*:read",
+      "required": "bill:read",
+      "want": false
+    },
+    {
+      "granted": "*",
+      "required": "",
+      "want": false
+    },
+    {
+      "granted": "*",
+      "required": "a:*",
+      "want": false
+    },
+    {
+      "granted": "identity:*",
+      "required": "identity:read",
+      "want": true
+    },
+    {
+      "granted": "identity:*",
+      "required": "identity:user:write",
+      "want": true
+    },
+    {
+      "granted": "identity:*",
+      "required": "identity",
+      "want": false
+    },
+    {
+      "granted": "identity:user",
+      "required": "identity:user:read",
+      "want": false
+    },
+    {
+      "granted": "identity:user:read",
+      "required": "identity:user",
+      "want": false
+    },
+    {
+      "granted": "billing:*",
+      "required": "identity:user:read",
+      "want": false
+    },
+    {
+      "granted": "*",
+      "required": "identity:user:read",
+      "want": true
+    },
+    {
+      "granted": "identity:user:read",
+      "required": "identity:user:write",
+      "want": false
+    },
+    {
+      "granted": "identity:*:purge",
+      "required": "identity:user:read",
+      "want": false
+    },
+    {
+      "granted": "a:*:*",
+      "required": "a:b:c",
+      "want": true
+    },
+    {
+      "granted": "*:*:read",
+      "required": "a:b:read",
+      "want": true
+    },
+    {
+      "granted": "*:*:read",
+      "required": "a:b:c:read",
+      "want": false
+    }
+  ],
+  "allowed": [
+    {
+      "granted": [],
+      "required": "a:b",
+      "want": false
+    },
+    {
+      "granted": [
+        "*",
+        "*:*"
+      ],
+      "required": "",
+      "want": false
+    },
+    {
+      "granted": [
+        "x:y",
+        "a:*"
+      ],
+      "required": "a:b",
+      "want": true
+    },
+    {
+      "granted": [
+        "x:y",
+        "a:*"
+      ],
+      "required": "c:d",
+      "want": false
+    }
+  ],
+  "allowedAll": [
+    {
+      "granted": [
+        "a:*"
+      ],
+      "required": [
+        "a:b",
+        "a:c"
+      ],
+      "want": true
+    },
+    {
+      "granted": [
+        "a:b"
+      ],
+      "required": [
+        "a:b",
+        "a:c"
+      ],
+      "want": false
+    },
+    {
+      "granted": [
+        "*"
+      ],
+      "required": [],
+      "want": false
+    },
+    {
+      "granted": [
+        "a:b",
+        "a:c"
+      ],
+      "required": [
+        "a:c"
+      ],
+      "want": true
+    }
+  ]
+}

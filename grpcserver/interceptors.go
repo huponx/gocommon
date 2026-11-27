@@ -68,7 +68,7 @@ func callerField(ctx context.Context) zap.Field {
 	return zap.Skip()
 }
 
-func unaryMethodPerms(perms map[string]string) grpc.UnaryServerInterceptor {
+func unaryMethodPerms(perms map[string]Rule) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if err := checkMethod(ctx, perms, info.FullMethod); err != nil {
 			return nil, err
@@ -77,7 +77,7 @@ func unaryMethodPerms(perms map[string]string) grpc.UnaryServerInterceptor {
 	}
 }
 
-func streamMethodPerms(perms map[string]string) grpc.StreamServerInterceptor {
+func streamMethodPerms(perms map[string]Rule) grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		if err := checkMethod(ss.Context(), perms, info.FullMethod); err != nil {
 			return err

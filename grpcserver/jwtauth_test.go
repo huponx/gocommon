@@ -127,12 +127,14 @@ func TestAnyAuth(t *testing.T) {
 }
 
 func TestCheckMethod(t *testing.T) {
-	perms := map[string]string{
-		"/svc/Read":   "bill:read",
-		"/svc/Any":    Public,
-		"/svc/Admin":  "bill:admin",
-		"/svc/Empty":  "",
-		"/svc/Stream": "bill:*",
+	perms := map[string]Rule{
+		"/svc/Read":   {Any: []string{"bill:read"}},
+		"/svc/Any":    PublicRule,
+		"/svc/Admin":  {Any: []string{"bill:admin"}},
+		"/svc/Empty":  {},
+		"/svc/Stream": {Any: []string{"bill:*"}},
+		"/svc/OneOf":  {Any: []string{"bill:read", "bill:approve"}},
+		"/svc/Both":   {All: []string{"bill:read", "bill:approve"}},
 	}
 	withPerms := func(p ...string) context.Context {
 		return authn.WithPrincipal(context.Background(), &authn.Principal{Subject: "u", Perms: p})
@@ -150,6 +152,11 @@ func TestCheckMethod(t *testing.T) {
 		{"public", withPerms(), "/svc/Any", codes.OK},
 		{"unmapped method denied", withPerms("*"), "/svc/New", codes.PermissionDenied},
 		{"empty requirement denied", withPerms("*"), "/svc/Empty", codes.PermissionDenied},
+		{"any_of passes with one of two", withPerms("bill:approve"), "/svc/OneOf", codes.OK},
+		{"any_of fails with neither", withPerms("bill:write"), "/svc/OneOf", codes.PermissionDenied},
+		{"all_of fails with one of two", withPerms("bill:read"), "/svc/Both", codes.PermissionDenied},
+		{"all_of passes with both", withPerms("bill:read", "bill:approve"), "/svc/Both", codes.OK},
+		{"all_of passes with a wildcard", withPerms("bill:*"), "/svc/Both", codes.OK},
 		{"admin", withPerms("bill:read"), "/svc/Admin", codes.PermissionDenied},
 		{"health open", context.Background(), "/grpc.health.v1.Health/Check", codes.OK},
 		{"kube caller trusted", WithCaller(context.Background(), "system:serviceaccount:a:b"), "/svc/Read", codes.OK},

@@ -14,7 +14,7 @@ type AuthFunc func(ctx context.Context) (context.Context, error)
 type options struct {
 	logger           *zap.Logger
 	auth             AuthFunc
-	methodPerms      map[string]string
+	methodPerms      map[string]Rule
 	enableReflection bool
 	enableHealth     bool
 	maxRecvMsgSize   int
