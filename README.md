@@ -251,18 +251,25 @@ verifier, _ := jwtx.NewVerifier(jwtx.VerifierConfig{Issuer: cfg.Issuer, Audience
 
 grpcserver.New(
     grpcserver.WithAuth(grpcserver.AnyAuth(grpcserver.JWTAuth(verifier), kubeAuth)),
-    grpcserver.WithMethodPermissions(map[string]string{ // deny by default
-        "/billing.v1.Billing/GetInvoice":    "invoice:read",
-        "/billing.v1.Billing/CreateInvoice": "invoice:write",
-        "/billing.v1.Billing/Ping":          grpcserver.Public, // any authenticated caller
-    }),
+    // deny by default; the rules are the authz.v1.rule options of the RPCs in the proto
+    grpcserver.WithMethodPermissions(grpcserver.PermissionsFromProto(billingv1.File_billing_v1_billing_proto, billingv1.File_billing_v1_permissions_proto)),
+    // or by hand: grpcserver.Rule{Any: []string{"invoice:read", "invoice:approve"}} (one is enough),
+    // {All: ...} (every one), grpcserver.PublicRule (any authenticated caller)
 )
+
+// In the tests of the service: every RPC has exactly one rule and every name in a rule is declared
+func TestCoverage(t *testing.T) {
+    grpcserver.CheckCoverage(t, billingv1.File_billing_v1_billing_proto, billingv1.File_billing_v1_permissions_proto)
+}
+
+// At start, before the service is ready (not ready until identity has the permissions; exits after the timeout)
+err := permsync.RegisterWithRetry(ctx, log, identityv1.NewIdentityServiceClient(conn), "billing", 2*time.Minute, billingv1.File_billing_v1_permissions_proto)
 
 // In a handler
 p := authn.FromContext(ctx) // Subject, ClientID, TokenID (jti), Perms, Actor, ...
 ```
 
-A caller authenticated only by `KubeAuth` has no principal and is trusted for every mapped method (its allow list is its authorization). A method missing from the map is refused for everybody.
+A caller authenticated only by `KubeAuth` has no principal and is trusted for every mapped method (its allow list is its authorization). A method missing from the map, or whose `Rule` is empty, is refused for everybody. `Rule.Allows` checks `Any` with `authz.Allowed` per name and `All` with `authz.AllowedAll`; the matcher is shared with the web apps through `authz/testdata/match_vectors.json`. The `permsync` package registers the permissions a service declares with identity (`RegisterPermissions`).
 
 ```go
 // Client: speak for the user of the current request (token exchange), or as the service

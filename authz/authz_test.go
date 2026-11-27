@@ -1,6 +1,10 @@
 package authz
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
 
 func TestMatch(t *testing.T) {
 	cases := []struct {
@@ -62,6 +66,51 @@ func TestValid(t *testing.T) {
 	for _, bad := range []string{"", "a:", ":a", "a::b", "A:b", "a b:c", "a*:b"} {
 		if Valid(bad) {
 			t.Errorf("%q should be invalid", bad)
+		}
+	}
+}
+
+// The vectors are shared with web/packages/auth-client (permissions.test.ts): both matchers must agree.
+func TestSharedVectors(t *testing.T) {
+	raw, err := os.ReadFile("testdata/match_vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		Match []struct {
+			Granted, Required string
+			Want              bool
+		} `json:"match"`
+		Allowed []struct {
+			Granted  []string
+			Required string
+			Want     bool
+		} `json:"allowed"`
+		AllowedAll []struct {
+			Granted  []string
+			Required []string
+			Want     bool
+		} `json:"allowedAll"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Match) == 0 || len(v.Allowed) == 0 || len(v.AllowedAll) == 0 {
+		t.Fatal("the vector file is empty")
+	}
+	for _, c := range v.Match {
+		if got := Match(c.Granted, c.Required); got != c.Want {
+			t.Errorf("Match(%q,%q)=%v want %v", c.Granted, c.Required, got, c.Want)
+		}
+	}
+	for _, c := range v.Allowed {
+		if got := Allowed(c.Granted, c.Required); got != c.Want {
+			t.Errorf("Allowed(%v,%q)=%v want %v", c.Granted, c.Required, got, c.Want)
+		}
+	}
+	for _, c := range v.AllowedAll {
+		if got := AllowedAll(c.Granted, c.Required...); got != c.Want {
+			t.Errorf("AllowedAll(%v,%v)=%v want %v", c.Granted, c.Required, got, c.Want)
 		}
 	}
 }
