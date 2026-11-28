@@ -49,6 +49,11 @@ func (p Postgres) URL() string {
 	return u.String()
 }
 
+// Metrics is where a service without an HTTP server serves its Prometheus metrics (package metrics). Empty turns them off.
+type Metrics struct {
+	MetricsAddr string `env:"METRICS_ADDR" envDefault:":9100"`
+}
+
 type Redis struct {
 	Host     string `env:"REDIS_HOST" envDefault:"localhost"`
 	Port     int    `env:"REDIS_PORT" envDefault:"6379"`

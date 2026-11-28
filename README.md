@@ -10,7 +10,7 @@ Requires Go 1.26+.
 |---|---|
 | [`requestctx`](#requestctx) | Identity on context; header/metadata mapping |
 | [`logging`](#logging) | Zap; `FromCtx` adds request fields |
-| [`config`](#config) | Env load + reusable blocks (`Server`, `Log`, `Postgres`, `Redis`, `GRPCClient`) |
+| [`config`](#config) | Env load + reusable blocks (`Server`, `Log`, `Postgres`, `Redis`, `GRPCClient`, `Metrics`) |
 | [`pagination`](#pagination) | Token pagination: page size rules and the opaque page token (`Size`, `Encode`, `Decode`) |
 | [`grpcserver`](#grpcserver) | Server + interceptors, gRPC health, graceful stop |
 | [`grpcclient`](#grpcclient) | Dial + interceptors (ctx → metadata, unary timeout, logging) |
@@ -18,6 +18,9 @@ Requires Go 1.26+.
 | [`healthz`](#healthz) | Gin `/healthz` + `/readyz` |
 | [`worker`](#worker) | Signals, in-flight drain, optional stdlib probes |
 | [`apperror`](#apperror) | Typed errors → gRPC `status` + HTTP JSON |
+| [`netsafe`](#netsafe) | HTTP client that reaches public addresses only, `Scrub` (URL out of an error), `SafeLink` |
+| [`metrics`](#metrics) | Prometheus registry and `/metrics` server for a service without HTTP |
+| [`notifyclient`](#notifyclient) | Send an event to courier (`Notify`) without building the request by hand |
 | [`jwtx`, `authn`, `authz`, `tokenexchange`, `oidcclient`](#jwt-rbac-and-token-exchange) | JWT, RBAC, token exchange, OIDC client |
 ## `requestctx`
 ```go
@@ -146,6 +149,34 @@ apperror.WriteHTTP(c, err) // {"error":{"code":"NotFound","message":"user not fo
 ```
 Helpers: `InvalidArgument`, `NotFound`, `Unauthenticated`, `PermissionDenied`, `AlreadyExists`, `FailedPrecondition`, `Unavailable`, `Internal`, `Wrap`, `From`.
 HTTP mapping includes `InvalidArgument` → 400, `Unauthenticated` → 401, `NotFound` → 404, `Unavailable` → 502, `DeadlineExceeded` → 504, unknown → 500.
+## `netsafe`
+
+For a service that calls, or shows, an address somebody else chose (a webhook of an administrator, the push endpoint of a browser, a link in a notification).
+
+- `netsafe.Client(timeout, allowPrivate)`: an HTTP client that refuses to connect to a private address (loopback, RFC 1918, link local, carrier grade NAT, NAT64, reserved ranges) and does not follow redirects. The check is on the connected IP, after the name was resolved, so a name that points inside the cluster is refused too. `allowPrivate` is for local runs. `netsafe.IsRefused(err)` tells that refusal (final: a retry cannot make the address public).
+- `netsafe.Scrub(err)`: the error of an HTTP call without its URL (the URL of the Telegram API holds the bot token, a Slack webhook URL is the secret). Use it before an error is stored or logged.
+- `netsafe.SafeLink(link)`: a path of the app (`/users/1`, not `//host`) or an http(s) URL with a host; `javascript:` and `data:` are not. Check a link before it is stored or becomes an `href`.
+
+## `metrics`
+
+```go
+reg := metrics.NewRegistry(myCollector)               // + the Go runtime and the process
+defer metrics.Serve(cfg.MetricsAddr, reg, log)()      // GET /metrics on METRICS_ADDR; "" turns it off
+```
+
+Embed `config.Metrics` (`METRICS_ADDR`, default `:9100`) in the config. Pods are found by the annotations `prometheus.io/scrape: "true"`, `prometheus.io/port: "9100"`, `prometheus.io/path: /metrics`.
+
+## `notifyclient`
+
+```go
+nc, closeConn, err := notifyclient.Dial(ctx, notifyclient.DialConfig{Target: cfg.CourierTarget, TokenFile: cfg.CourierTokenFile, Logger: log})
+res, err := nc.Notify(ctx, notifyclient.Request{
+    EventType: "security.mfa_changed", IdempotencyKey: "mfa-"+id, UserIDs: []string{userID}, Data: map[string]string{"change": "enabled"},
+})
+```
+
+The service says what happened and to whom (user ids of identity, or raw `Recipients`); courier picks the channels, the address and the language. `Channels` narrows the channels of the type. `notifyclient.New(courierv1.CourierServiceClient)` wraps a client you already have (tests).
+
 ## Identity flow
 HTTP edge hydrates context from headers, the app sets `user_id` after auth, the gRPC client copies values into metadata, the gRPC server hydrates context again. The same IDs show up on access logs and `logging.FromCtx`.
 Workers should copy `Values` from the enqueue payload into `Go`'s `ctx` if they need the same log fields.
@@ -163,7 +194,7 @@ go test -race -count=1 ./...
 ```
 ## Service-to-service auth
 
-Two ways to authenticate a gRPC call between services. Use ServiceAccount tokens inside a cluster, the static Bearer token only where there is no Kubernetes (a laptop).
+Authenticate a gRPC call between services with a ServiceAccount token inside a cluster, or with client credentials of identity (a service token with permissions). On a laptop a local courier does not authenticate services (`grpcserver.LocalCaller("local")` gives the call a caller name so that method permissions trust it); identity is called with client credentials like in a cluster. For the RPCs of "me" (the inbox, the settings of the signed-in user) `authn.RequireUser(ctx)` returns the user of the token and refuses a service; `authn.RequirePrincipal(ctx)` refuses a caller with no token, which the method permissions would trust (a ServiceAccount) although it must not call the admin screens.
 
 ### ServiceAccount token (recommended, no secrets)
 
@@ -214,7 +245,9 @@ grpcclient.Dial(ctx, target, grpcclient.WithBearerTokenFile("/var/run/secrets/co
 
 The file is re-read when it changes, so a rotated token is picked up without a restart. A missing or empty file fails the call with `Unavailable` instead of sending it unauthenticated. From outside the cluster use a short-lived token: `kubectl create token <sa> -n <ns> --audience courier --duration 10m`.
 
-### Static Bearer token
+### Static Bearer token (library helper; none of our services uses it)
+
+Prefer client credentials (`tokenexchange`) or a ServiceAccount token: a static token names no caller and carries no permission. The helpers remain for a service of your own that cannot do better.
 
 Token belongs to the **receiver**. Callers must present the same secret. gRPC helpers take a string; they do not read env or hardcode a service name. Convention: env `{RECEIVER}_S2S_TOKEN` (for example `COURIER_S2S_TOKEN`), injected from a Kubernetes `Secret` via `secretKeyRef`, never a ConfigMap.
 

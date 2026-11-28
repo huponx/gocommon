@@ -350,3 +350,10 @@ func inClusterClient(caPath string) (*http.Client, error) {
 		},
 	}, nil
 }
+
+// LocalCaller is the AuthFunc of a run on a laptop (ENV=local), where there is no Kubernetes API server to review a
+// ServiceAccount token: it accepts every call and gives it the caller `name`, so that the method permissions trust it
+// as they trust a ServiceAccount. Never register it outside a local run.
+func LocalCaller(name string) AuthFunc {
+	return func(ctx context.Context) (context.Context, error) { return WithCaller(ctx, name), nil }
+}

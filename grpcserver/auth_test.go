@@ -88,3 +88,10 @@ func TestUnaryAuthRejectsAppMethod(t *testing.T) {
 		t.Fatalf("code %v", err)
 	}
 }
+
+func TestLocalCallerNamesTheCaller(t *testing.T) {
+	ctx, err := LocalCaller("local")(context.Background())
+	if err != nil || CallerFromContext(ctx) != "local" {
+		t.Fatalf("%q %v", CallerFromContext(ctx), err)
+	}
+}
