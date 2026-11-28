@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -250,4 +251,78 @@ func tlsDial(addr string, cfg *tls.Config) (*tls.Conn, error) {
 // Go reports "unknown authority", the macOS verifier "is not trusted".
 func untrusted(err error) bool {
 	return strings.Contains(err.Error(), "unknown authority") || strings.Contains(err.Error(), "not trusted")
+}
+
+func startHTTPS(t *testing.T, f *fixture) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })}
+	go func() {
+		_ = tlsconfig.ServeTLS(srv, lis, tlsconfig.ServerConfig{CertFile: f.certFile, KeyFile: f.keyFile})
+	}()
+	t.Cleanup(func() { _ = srv.Close() })
+	return "https://" + lis.Addr().String()
+}
+
+func TestHTTPSWithClientCA(t *testing.T) {
+	f := start(t)
+	url := startHTTPS(t, f)
+	c, err := tlsconfig.HTTPClient(tlsconfig.ClientConfig{CAFile: f.caFile}, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestHTTPSWrongCAAndWrongName(t *testing.T) {
+	f := start(t)
+	url := startHTTPS(t, f)
+	other := filepath.Join(f.dir, "other.crt")
+	write(t, other, newCA(t, "other-ca").pem)
+	c, _ := tlsconfig.HTTPClient(tlsconfig.ClientConfig{CAFile: other}, 2*time.Second)
+	if _, err := c.Get(url); err == nil || !untrusted(err) {
+		t.Fatalf("want an untrusted certificate error, got %v", err)
+	}
+	c, _ = tlsconfig.HTTPClient(tlsconfig.ClientConfig{CAFile: f.caFile, ServerName: "other.svc"}, 2*time.Second)
+	if _, err := c.Get(url); err == nil || !strings.Contains(err.Error(), "other.svc") {
+		t.Fatalf("want a certificate name error, got %v", err)
+	}
+}
+
+func TestHTTPClientBadCAFile(t *testing.T) {
+	if _, err := tlsconfig.HTTPClient(tlsconfig.ClientConfig{CAFile: "/nope"}, time.Second); err == nil {
+		t.Fatal("want an error")
+	}
+}
+
+func TestServeTLSBadCertFails(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lis.Close()
+	if err := tlsconfig.ServeTLS(&http.Server{}, lis, tlsconfig.ServerConfig{CertFile: "/nope", KeyFile: "/nope"}); err == nil {
+		t.Fatal("want an error")
+	}
+}
+
+func TestHTTPClientForURL(t *testing.T) {
+	// plain HTTP never reads the CA file
+	c, err := tlsconfig.HTTPClientForURL("http://identity:8080/x", tlsconfig.ClientConfig{CAFile: "/nope"}, time.Second)
+	if c != nil || err != nil {
+		t.Fatalf("want nil, nil; got %v, %v", c, err)
+	}
+	if _, err := tlsconfig.HTTPClientForURL("https://identity:8443/x", tlsconfig.ClientConfig{CAFile: "/nope"}, time.Second); err == nil {
+		t.Fatal("want an error for a missing CA file with https")
+	}
 }
