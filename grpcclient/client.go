@@ -16,6 +16,10 @@ func Dial(ctx context.Context, target string, opts ...Option) (*grpc.ClientConn,
 		opt(&o)
 	}
 
+	if o.tlsErr != nil {
+		return nil, fmt.Errorf("dial %s: %w", target, o.tlsErr)
+	}
+
 	src := o.tokenSource()
 	unary := []grpc.UnaryClientInterceptor{
 		unaryRequestContext(),

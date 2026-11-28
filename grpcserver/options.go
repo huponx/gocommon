@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"crypto/tls"
 	"time"
 
 	"go.uber.org/zap"
@@ -20,6 +21,7 @@ type options struct {
 	maxRecvMsgSize   int
 	maxSendMsgSize   int
 	keepalive        keepalive.ServerParameters
+	tlsConfig        *tls.Config
 	extra            []grpc.ServerOption
 }
 
@@ -79,5 +81,12 @@ func WithMaxMsgSize(recv, send int) Option {
 func WithServerOptions(opts ...grpc.ServerOption) Option {
 	return func(o *options) {
 		o.extra = append(o.extra, opts...)
+	}
+}
+
+// WithTLS serves TLS with the given config (see package tlsconfig); without it the server is plaintext.
+func WithTLS(cfg *tls.Config) Option {
+	return func(o *options) {
+		o.tlsConfig = cfg
 	}
 }

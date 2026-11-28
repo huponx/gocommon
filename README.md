@@ -14,6 +14,7 @@ Requires Go 1.26+.
 | [`pagination`](#pagination) | Token pagination: page size rules and the opaque page token (`Size`, `Encode`, `Decode`) |
 | [`grpcserver`](#grpcserver) | Server + interceptors, gRPC health, graceful stop |
 | [`grpcclient`](#grpcclient) | Dial + interceptors (ctx → metadata, unary timeout, logging) |
+| [`tlsconfig`](#tls-for-in-cluster-grpc-tlsconfig) | TLS configs of gRPC from files: a reloading server certificate, a private CA for clients |
 | [`httpx`](#httpx) | Gin middleware: logger, request context, access log |
 | [`healthz`](#healthz) | Gin `/healthz` + `/readyz` |
 | [`worker`](#worker) | Signals, in-flight drain, optional stdlib probes |
@@ -68,6 +69,7 @@ cfg := config.MustLoad[Config]()
 | `Postgres` | `POSTGRES_HOST/PORT/USER/PASSWORD/DB/SSLMODE` — `URL()` |
 | `Redis` | `REDIS_HOST/PORT/PASSWORD/DB` — `URL()` |
 | `GRPCClient` | `GRPC_TARGET` (`localhost:9090`), `GRPC_TIMEOUT` (`5s`), `GRPC_INSECURE` (`true`) |
+| `GRPCTLS` | `GRPC_TLS_CERT_FILE`, `GRPC_TLS_KEY_FILE` (server), `GRPC_TLS_CA_FILE`, `GRPC_TLS_SERVER_NAME` (client); all empty by default — see [TLS](#tls-for-in-cluster-grpc-tlsconfig) |
 ## `httpx`
 Gin middleware. Typical order:
 ```go
@@ -105,7 +107,7 @@ srv.SetServing(pb.Foo_ServiceDesc.ServiceName, true)
 // on signal:
 srv.Stop(shutdownCtx) // health Shutdown, then GracefulStop; hard Stop if ctx expires
 ```
-Options: `WithHealth`, `WithMaxMsgSize`, `WithServerOptions`.
+Options: `WithHealth`, `WithMaxMsgSize`, `WithTLS`, `WithServerOptions`.
 ## `grpcclient`
 ```go
 conn, err := grpcclient.Dial(ctx, cfg.GRPC.Target,
@@ -114,7 +116,36 @@ conn, err := grpcclient.Dial(ctx, cfg.GRPC.Target,
 	grpcclient.WithInsecure(cfg.GRPC.Insecure),
 )
 ```
-Unary interceptors copy `requestctx` onto outgoing metadata, apply a per-call timeout, and log. TLS via `WithTLS` / `WithInsecure(false)`.
+Unary interceptors copy `requestctx` onto outgoing metadata, apply a per-call timeout, and log. TLS via `WithTLSFiles(cfg.GRPCTLS.ClientTLS())` (trusts the private CA of the file), `WithTLS(*tls.Config)` or `WithInsecure(false)` (system roots only).
+## TLS for in-cluster gRPC (`tlsconfig`)
+Server-side TLS only: the server presents a certificate, no client certificate is requested. Callers are still authenticated at the application layer (ServiceAccount token, JWT, client credentials). Everything defaults to plaintext; each hop is switched on separately.
+
+```go
+// server
+type Config struct{ config.GRPCTLS /* ... */ }
+var opts []grpcserver.Option
+if st := cfg.ServerTLS(); st.Enabled() {
+	tc, err := tlsconfig.Server(st)   // fails at startup on an unreadable pair
+	opts = append(opts, grpcserver.WithTLS(tc))
+}
+// client: the per-hop switch decides, the CA comes from GRPC_TLS_CA_FILE
+if !cfg.Insecure {
+	copts = append(copts, grpcclient.WithTLSFiles(cfg.ClientTLS()))
+}
+```
+
+| Env | Side | Meaning |
+|---|---|---|
+| `GRPC_TLS_CERT_FILE`, `GRPC_TLS_KEY_FILE` | server | PEM pair; set the cert file to serve TLS |
+| `GRPC_TLS_CA_FILE` | client | PEM bundle trusted **in addition to** the system roots |
+| `GRPC_TLS_SERVER_NAME` | client | name the certificate is checked against (default: host of the target) |
+
+**Rotation.** The server config's `GetCertificate` stats the two files on each handshake and reloads the pair when either modification time changes, so a cert-manager renewal (the Secret is updated in place, the kubelet swaps the mounted files) needs no restart. If the pair is momentarily inconsistent (cert swapped, key not yet), the previous certificate keeps being served. Established connections keep their certificate until they reconnect. The client reads the CA once at dial time.
+
+**Errors.** A plaintext client against a TLS server: the client sees `Unavailable` (connection closed) and the server logs `tls: first record does not look like a TLS handshake`. A TLS client against a plaintext server: `Unavailable ... first record does not look like a TLS handshake`-style handshake failure on the client. A client without (or with the wrong) CA: `x509: certificate signed by unknown authority`. A name that is not in the certificate: `x509: certificate is valid for a, b, not c` (set `GRPC_TLS_SERVER_NAME` or fix the `dnsNames`).
+
+A gRPC port cannot serve both plaintext and TLS: enable the server and set the client's `*_INSECURE=false` in the same rollout.
+
 ## `healthz`
 Gin handlers. JSON: `{"status":"ok","checks":{"name":"ok"}}`. Failed checks → `503` + `"unavailable"`.
 ```go
@@ -170,6 +201,7 @@ Embed `config.Metrics` (`METRICS_ADDR`, default `:9100`) in the config. Pods are
 
 ```go
 nc, closeConn, err := notifyclient.Dial(ctx, notifyclient.DialConfig{Target: cfg.CourierTarget, TokenFile: cfg.CourierTokenFile, Logger: log})
+// TLS: Secure: true, TLS: cfg.GRPCTLS.ClientTLS()
 res, err := nc.Notify(ctx, notifyclient.Request{
     EventType: "security.mfa_changed", IdempotencyKey: "mfa-"+id, UserIDs: []string{userID}, Data: map[string]string{"change": "enabled"},
 })
