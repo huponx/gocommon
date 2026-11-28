@@ -56,7 +56,7 @@ func (c *ca) issue(t *testing.T, name string, serial int64) (certPEM, keyPEM []b
 		t.Fatal(err)
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: name}, DNSNames: []string{name},
+		SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: name}, DNSNames: []string{name}, IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -106,9 +106,8 @@ func start(t *testing.T) *fixture {
 	}
 	go func() { _ = srv.GRPC.Serve(lis) }()
 	t.Cleanup(srv.GRPC.Stop)
-	// Dialed by name: the leaf has a DNS SAN only.
-	_, port, _ := net.SplitHostPort(lis.Addr().String())
-	f.addr = net.JoinHostPort("localhost", port)
+	// Dialed by IP (the leaf has an IP SAN): "localhost" may resolve to ::1 first, where nothing listens.
+	f.addr = lis.Addr().String()
 	return f
 }
 
