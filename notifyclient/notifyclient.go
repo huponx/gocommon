@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/huponx/gocommon/grpcclient"
+	"github.com/huponx/gocommon/tlsconfig"
 	courierv1 "github.com/huponx/protogen/go/courier/v1"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -88,14 +89,18 @@ type DialConfig struct {
 	// laptop: a local courier does not authenticate services.
 	TokenFile string
 	Timeout   time.Duration
-	// Secure turns TLS on; the default is plaintext gRPC, as inside a cluster (courier has no TLS of its own).
+	// Secure turns TLS on; the default is plaintext gRPC. TLS trusts TLS.CAFile (plus the system roots).
 	Secure bool
+	TLS    tlsconfig.ClientConfig
 	Logger *zap.Logger
 }
 
 // Dial connects to courier and returns the client and the function that closes the connection.
 func Dial(ctx context.Context, cfg DialConfig) (*Client, func() error, error) {
 	opts := []grpcclient.Option{grpcclient.WithLogger(cfg.Logger), grpcclient.WithInsecure(!cfg.Secure)}
+	if cfg.Secure {
+		opts = append(opts, grpcclient.WithTLSFiles(cfg.TLS))
+	}
 	if cfg.Timeout > 0 {
 		opts = append(opts, grpcclient.WithTimeout(cfg.Timeout))
 	}

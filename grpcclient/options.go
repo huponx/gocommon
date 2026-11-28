@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/huponx/gocommon/tlsconfig"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -15,6 +16,7 @@ type options struct {
 	timeout         time.Duration
 	insecure        bool
 	tlsConfig       *tls.Config
+	tlsErr          error
 	block           bool
 	maxRecvMsgSize  int
 	maxSendMsgSize  int
@@ -66,6 +68,15 @@ func WithTLS(cfg *tls.Config) Option {
 	return func(o *options) {
 		o.tlsConfig = cfg
 		o.insecure = false
+	}
+}
+
+// WithTLSFiles turns TLS on and trusts the CA of cfg (plus the system roots); an empty cfg is the system roots only. A bad
+// CA file is reported by Dial.
+func WithTLSFiles(cfg tlsconfig.ClientConfig) Option {
+	return func(o *options) {
+		o.insecure = false
+		o.tlsConfig, o.tlsErr = tlsconfig.Client(cfg)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"time"
+
+	"github.com/huponx/gocommon/tlsconfig"
 )
 
 type Server struct {
@@ -77,4 +79,24 @@ type GRPCClient struct {
 	Target   string        `env:"GRPC_TARGET" envDefault:"localhost:9090"`
 	Timeout  time.Duration `env:"GRPC_TIMEOUT" envDefault:"5s"`
 	Insecure bool          `env:"GRPC_INSECURE" envDefault:"true"`
+}
+
+// GRPCTLS is the TLS of in-cluster gRPC, embed it next to the service's other blocks. All empty is plaintext, as before.
+// A server sets the certificate pair; a client sets the CA it trusts and still decides per hop (its *_INSECURE variable)
+// whether to use TLS at all.
+type GRPCTLS struct {
+	CertFile   string `env:"GRPC_TLS_CERT_FILE"`
+	KeyFile    string `env:"GRPC_TLS_KEY_FILE"`
+	CAFile     string `env:"GRPC_TLS_CA_FILE"`
+	ServerName string `env:"GRPC_TLS_SERVER_NAME"`
+}
+
+// ServerTLS is the certificate a server presents; Enabled is false when GRPC_TLS_CERT_FILE is unset.
+func (t GRPCTLS) ServerTLS() tlsconfig.ServerConfig {
+	return tlsconfig.ServerConfig{CertFile: t.CertFile, KeyFile: t.KeyFile}
+}
+
+// ClientTLS is what a client trusts.
+func (t GRPCTLS) ClientTLS() tlsconfig.ClientConfig {
+	return tlsconfig.ClientConfig{CAFile: t.CAFile, ServerName: t.ServerName}
 }
