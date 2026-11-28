@@ -4,6 +4,7 @@ package authn
 
 import (
 	"context"
+	"github.com/huponx/gocommon/apperror"
 	"strings"
 
 	"github.com/huponx/gocommon/authz"
@@ -114,4 +115,27 @@ func WithPrincipal(ctx context.Context, p *Principal) context.Context {
 func FromContext(ctx context.Context) *Principal {
 	p, _ := ctx.Value(ctxKey{}).(*Principal)
 	return p
+}
+
+// RequireUser returns the subject of the user whose token the call carries. It is for the RPCs of "me" (the inbox, the
+// settings of the signed-in user): the user is taken from the token, never from the request. A call with no principal (a
+// ServiceAccount, which the method permissions trust) or with the token of a service has no user and is refused with
+// PermissionDenied and the reason `user_token_required`.
+func RequireUser(ctx context.Context) (string, error) {
+	p := FromContext(ctx)
+	if p == nil || p.Subject == "" || p.IsService() {
+		return "", apperror.PermissionDenied("this needs the token of a signed-in user").WithReason("user_token_required")
+	}
+	return p.Subject, nil
+}
+
+// RequirePrincipal returns the principal of the call, or PermissionDenied (reason `token_required`) when it has none:
+// for the RPCs that a service authenticated only by its ServiceAccount must not call even though the method
+// permissions trust it (the screens of the administrators).
+func RequirePrincipal(ctx context.Context) (*Principal, error) {
+	p := FromContext(ctx)
+	if p == nil {
+		return nil, apperror.PermissionDenied("this needs a token").WithReason("token_required")
+	}
+	return p, nil
 }
