@@ -14,7 +14,7 @@ Requires Go 1.26+.
 | [`pagination`](#pagination) | Token pagination: page size rules and the opaque page token (`Size`, `Encode`, `Decode`) |
 | [`grpcserver`](#grpcserver) | Server + interceptors, gRPC health, graceful stop |
 | [`grpcclient`](#grpcclient) | Dial + interceptors (ctx → metadata, unary timeout, logging) |
-| [`tlsconfig`](#tls-for-in-cluster-grpc-tlsconfig) | TLS configs of gRPC from files: a reloading server certificate, a private CA for clients |
+| [`tlsconfig`](#tls-for-in-cluster-grpc-tlsconfig) | TLS from files for gRPC and HTTP: a reloading server certificate, a private CA for clients |
 | [`httpx`](#httpx) | Gin middleware: logger, request context, access log |
 | [`healthz`](#healthz) | Gin `/healthz` + `/readyz` |
 | [`worker`](#worker) | Signals, in-flight drain, optional stdlib probes |
@@ -69,6 +69,7 @@ cfg := config.MustLoad[Config]()
 | `Postgres` | `POSTGRES_HOST/PORT/USER/PASSWORD/DB/SSLMODE` — `URL()` |
 | `Redis` | `REDIS_HOST/PORT/PASSWORD/DB` — `URL()` |
 | `GRPCClient` | `GRPC_TARGET` (`localhost:9090`), `GRPC_TIMEOUT` (`5s`), `GRPC_INSECURE` (`true`) |
+| `HTTPS` | `HTTPS_ADDR` (empty: off) — second, TLS listener for calls between services; see [TLS](#tls-for-in-cluster-grpc-tlsconfig) |
 | `GRPCTLS` | `GRPC_TLS_CERT_FILE`, `GRPC_TLS_KEY_FILE` (server), `GRPC_TLS_CA_FILE`, `GRPC_TLS_SERVER_NAME` (client); all empty by default — see [TLS](#tls-for-in-cluster-grpc-tlsconfig) |
 ## `httpx`
 Gin middleware. Typical order:
@@ -143,6 +144,21 @@ if !cfg.Insecure {
 **Rotation.** The server config's `GetCertificate` stats the two files on each handshake and reloads the pair when either modification time changes, so a cert-manager renewal (the Secret is updated in place, the kubelet swaps the mounted files) needs no restart. If the pair is momentarily inconsistent (cert swapped, key not yet), the previous certificate keeps being served. Established connections keep their certificate until they reconnect. The client reads the CA once at dial time.
 
 **Errors.** A plaintext client against a TLS server: the client sees `Unavailable` (connection closed) and the server logs `tls: first record does not look like a TLS handshake`. A TLS client against a plaintext server: `Unavailable ... first record does not look like a TLS handshake`-style handshake failure on the client. A client without (or with the wrong) CA: `x509: certificate signed by unknown authority`. A name that is not in the certificate: `x509: certificate is valid for a, b, not c` (set `GRPC_TLS_SERVER_NAME` or fix the `dnsNames`).
+
+**HTTP between services.** The same files serve the calls that are plain HTTP today (JWKS, the token endpoint, back-channel logout). A service keeps its plaintext port (ingress, probes) and adds a second listener over TLS, so clients move one at a time and there is no flip:
+
+```go
+// server: HTTPS_ADDR (config.HTTPS) set and a certificate configured
+if addr := cfg.HTTPSAddr; addr != "" && cfg.ServerTLS().Enabled() {
+	l, _ := net.Listen("tcp", addr)
+	go tlsconfig.ServeTLS(&http.Server{Handler: router}, l, cfg.ServerTLS()) // reloads like the gRPC server
+}
+// client: trusts GRPC_TLS_CA_FILE plus the system roots; use it where the code takes an *http.Client
+hc, err := tlsconfig.HTTPClient(cfg.ClientTLS(), 5*time.Second)
+jwtx.NewRemoteKeySet(jwtx.RemoteKeySetConfig{URL: cfg.JWKSURL, HTTPClient: hc})
+```
+
+`GRPC_TLS_*` keep their names for HTTP too: one certificate pair and one CA per service.
 
 A gRPC port cannot serve both plaintext and TLS: enable the server and set the client's `*_INSECURE=false` in the same rollout.
 

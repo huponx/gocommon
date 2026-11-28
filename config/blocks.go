@@ -100,3 +100,10 @@ func (t GRPCTLS) ServerTLS() tlsconfig.ServerConfig {
 func (t GRPCTLS) ClientTLS() tlsconfig.ClientConfig {
 	return tlsconfig.ClientConfig{CAFile: t.CAFile, ServerName: t.ServerName}
 }
+
+// HTTPS is the optional second HTTP listener of a service, over TLS with the certificate of GRPCTLS (GRPC_TLS_CERT_FILE,
+// GRPC_TLS_KEY_FILE), for the calls of other services inside the cluster. The plaintext port stays, for the ingress and
+// the probes. Empty is off.
+type HTTPS struct {
+	HTTPSAddr string `env:"HTTPS_ADDR"`
+}
